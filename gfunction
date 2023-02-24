@@ -1,1 +1,87 @@
-##Python code for calculating g-functions for BHE fields##
+####Python code for calculating g-functions for BHE fields####
+#author: Lukas Schleichert
+##import needed packages##
+import pandas as pd
+import geopandas as gpd
+import numpy as np
+from scipy.spatial import distance_matrix
+
+#defining GVAL function which calculates the g-function for a given borehole array
+#This function runs on a dataframe (df) which needs to have 'X' as x-coordinate, 'Y' as y-coordinate and 'Z' as depth of each borehole
+
+def GVAL(df):
+    #static parameters
+    g_end = float(6.6)  # 
+    r_b = float(0.065)  # Radius of the boreholes (m)
+
+    x_pos = df['X']
+    y_pos = df['Y']
+    max_depth = df['Z']
+    
+   
+    '''-------Input for FLS calculations----'''
+    fls_dataframe = pd.DataFrame(list(zip(x_pos, y_pos, max_depth)),
+                                 columns=['X', 'Y', 'Max_Depth'])
+    H_import = fls_dataframe['Max_Depth']
+    H_list = pd.DataFrame(H_import)
+
+    # print(x_pos)
+    # print(y_pos)
+    # print(H_list)
+
+    ''' ----- Depth-Matrix ---- '''
+    H1_matrix = H_list.T
+    H1_matrix = pd.DataFrame(np.repeat(H1_matrix.values, len(H_list), axis=0))
+    H1_matrix = H1_matrix.astype(float)
+
+    # print("H1-Matrix: ", H1_matrix)
+
+    H2_matrix = H_list
+    H2_matrix = pd.DataFrame(np.repeat(H2_matrix.values, len(H_list), axis=1))
+    H2_matrix = H2_matrix.astype(float)
+
+    ''' ----- Distance-Matrix ---- '''
+
+    Pos_table = pd.DataFrame(list(zip(x_pos, y_pos)), columns=['x-Pos', 'y-Pos'])
+    # print(Pos_table)
+
+    distance = pd.DataFrame(distance_matrix(Pos_table.values, Pos_table.values), index=Pos_table.index,
+                            columns=Pos_table.index)
+    Distance_matrix = distance.astype(float)
+
+    ''' ----- FLS  ---- '''
+
+    def d_fls(H1, H2, r):  # delta finite-linie-source
+
+        # delta_g_Finite-Line-Source - Effect from H1 to H2
+        d_g_fls = 1 / (4 * H2) * (-(H1 - H2) * np.log(np.sqrt(r ** 2 + (H1 - H2) ** 2) + H1 - H2) \
+                                  - (H2 - H1) * np.log(np.sqrt(r ** 2 + (H1 - H2) ** 2) - H1 + H2) \
+                                  - (H2 + H1) * np.log(np.sqrt(r ** 2 + (H1 + H2) ** 2) + H1 + H2) \
+                                  + (H2 + H1) * np.log(np.sqrt(r ** 2 + (H1 + H2) ** 2) - H1 - H2) \
+                                  + 2 * np.sqrt(r ** 2 + (H1 - H2) ** 2) + 2 * np.sqrt(r ** 2 + (H1 + H2) ** 2) \
+                                  + 2 * H2 * np.log(np.sqrt(r ** 2 + H2 ** 2) + H2) - 2 * H2 * np.log(
+                    np.sqrt(r ** 2 + H2 ** 2) - H2) \
+                                  + 2 * H1 * np.log(np.sqrt(r ** 2 + H1 ** 2) + H1) - 2 * H1 * np.log(
+                    np.sqrt(r ** 2 + H1 ** 2) - H1) \
+                                  - 4 * np.sqrt(r ** 2 + H2 ** 2) - 4 * np.sqrt(r ** 2 + H1 ** 2) \
+                                  + 4 * r)
+
+        return (d_g_fls)
+
+    ''' ----- Matrix calculations ---- '''
+    g_fls_matrix = pd.DataFrame({})
+
+    Distance_matrix = Distance_matrix.replace(0, np.NaN)
+    g_fls_matrix = d_fls(H1_matrix, H2_matrix, Distance_matrix)
+    g_fls_matrix = g_fls_matrix.fillna(g_end - np.log(r_b / (H1_matrix * 0.0005)))  # Replaces NaN
+    # print(g_fls_matrix)
+
+    ''' ----- Sums ---- '''
+    EWS_g_functions = g_fls_matrix.sum(axis=1)
+
+    # print(EWS_g_functions)
+
+    Field_g_function = sum(EWS_g_functions) / len(g_fls_matrix.index)  # Average
+    GVal = (round(Field_g_function, 3))
+    print(GVal)
+    return GVal
