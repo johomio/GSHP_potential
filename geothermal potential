@@ -1,0 +1,156 @@
+##this is a R code for calculating the geothermal potential per parcel on a regional scale##
+# Author: J. M. Miocic
+
+#load libraries
+library(tidyverse)
+
+
+############load input data#######
+#CSV should have one row per parcel
+#data should include: Parcel Number/Location (OBJECT_UUI), Average annual surface temperature in Degree C (SurfT), Max. depth of GSHPs in meters (EWS_length), Number of GSHPs (EWS_count),
+#Thermal conductivity of the subsurface in W/mK (Lambda), geothermal heat flow in W/m2 (q_geo), g-function (GVal)
+#The g-function for the parcel can be calulated with the python script available in the same github repository. 
+
+input<-read.csv("Samples.csv", header=T)
+
+##Create data.frame for calculations#
+count<-length(input$OBJECT_UUI)
+
+location<-input$OBJECT_UUI
+T_surface <-(input$SurfT)  # Surface Temperature in deg C
+EWS_length<-(input$EWS_length) #Maximum length of Boreholes in meters
+EWS_count <-(input$EWS_count) # Count of Boreholes per parcel
+Lambda <- (input$Lambda) # Thermal conductivity of the subsurface in W/mK
+q_geo <- (input$q_geo) # Geothermal heat flow in W/m2
+q_ews_max<-(rep(0.01, count)) #Maximum heat extraction rate: Target variable (W/m)
+GVal <-(input$GVal)
+
+df<-data.frame(location,T_surface, EWS_length, EWS_count, Lambda, q_geo, q_ews_max, GVal)
+
+####Function to calculate maximum heat extraction rate, heating power per parcel###
+geotherm <- function(location, T_surface, EWS_length, EWS_count, Lambda, q_geo, q_ews_max, GVal){
+    ###Fixed data###
+  Usage <- 1800  #hours per year
+  rb <- 0.0675  #Radius of well, DN40 Doppel U pipe (in m)
+  pecp <- 2.18  #density related heat capacity of soil/rock (MJ/(m³/K))
+  dT_Sole<- 3 #Maximum difference between in and outflow temperature
+  COP <- 4.5  #Efficiency of the heat pump
+  R_b<- 0.1 #effective Borehole thermal resistance (m*K/W)
+  
+  #Define output variables#
+  #location = location
+  #loc<-vector()
+  a<-vector()
+  b<-vector()
+  c<-vector()
+  d<-vector()
+  e<-vector()
+  df<-NULL
+  
+  ###Internal parameters to calculate####
+  T_soil <- T_surface + ((EWS_length*q_geo) / (2*Lambda)) #Temperature of the soil
+  rb_h <- rb/EWS_length
+  g_corr <- GVal
+  R_stat <- 1/(2 * Lambda * pi)* g_corr
+  Eindring <- sqrt(Lambda/(2.18 * 1000000)*(8760*3600)/pi)
+  R_cycl <- 1/(2*pi*Lambda)*sqrt((log(2/(rb*sqrt(2)/Eindring))-0.5722)^2 + pi^2/16)
+  R_max <- 1/(2*pi*Lambda)*(log((sqrt(4*Lambda/(2.18 *1000000)*24*3600))/rb)-0.5722/2)
+  
+  #Parameters to cacluate T_in###
+  q_ews_max_1 <- q_ews_max #Intitial value
+  
+  fun_T_in <-function(q_ews_max_1){
+    (T_soil + (((-((q_ews_max_1*EWS_length*EWS_count*Usage)*1000 / (EWS_length*EWS_count*8760))) *(R_b +R_stat))+
+                 ((-(((q_ews_max_1*EWS_length*EWS_count*Usage) * 0.16)*1000 / (EWS_length*EWS_count*730) - 
+                       ((q_ews_max_1*EWS_length*EWS_count*Usage)*1000 / (EWS_length*EWS_count*8760)))) *(R_cycl + R_b))+
+                 (-((EWS_length*EWS_count*q_ews_max_1)*1000 / (EWS_length*EWS_count) - ((q_ews_max_1*EWS_length*EWS_count*Usage)*1000 / (EWS_length*EWS_count*8760)) -(((q_ews_max_1*EWS_length*EWS_count*Usage) * 0.16)*1000 / (EWS_length*EWS_count*730) - ((q_ews_max_1*EWS_length*EWS_count*Usage)*1000 / (EWS_length*EWS_count*8760))))*(R_b + R_max))))-(dT_Sole/2)
+  }
+  fun_T_out <-function(q_ews_max_1){
+    (T_soil + (((-((q_ews_max_1*EWS_length*EWS_count*Usage)*1000 / (EWS_length*EWS_count*8760))) *(R_b +R_stat))+
+                 ((-(((q_ews_max_1*EWS_length*EWS_count*Usage) * 0.16)*1000 / (EWS_length*EWS_count*730) - 
+                       ((q_ews_max_1*EWS_length*EWS_count*Usage)*1000 / (EWS_length*EWS_count*8760)))) *(R_cycl + R_b))+
+                 (-((EWS_length*EWS_count*q_ews_max_1)*1000 / (EWS_length*EWS_count) - ((q_ews_max_1*EWS_length*EWS_count*Usage)*1000 / (EWS_length*EWS_count*8760)) -(((q_ews_max_1*EWS_length*EWS_count*Usage) * 0.16)*1000 / (EWS_length*EWS_count*730) - ((q_ews_max_1*EWS_length*EWS_count*Usage)*1000 / (EWS_length*EWS_count*8760))))*(R_b + R_max))))+(dT_Sole/2)
+  }
+  
+  T_in<-fun_T_in(q_ews_max_1)
+  T_out<-fun_T_out(q_ews_max_1)
+  
+   ###Optimising q_ews_max within restriction that the maximum temperature difference between heat pump outflow and inflow is less than 3 deg K# 
+   ##Here the parcels within groundwater protection areas and outside of groundwater protection areas need to be treated differently. 
+   ## For all parcels not within a groundwater protection area###
+   # while(T_in < -3){
+   #   q_ews_max_1= q_ews_max_1 - 0.0001
+   #   T_in<-fun_T_in(q_ews_max_1)
+   # } 
+   # while (T_in >-2.95){
+   #   q_ews_max_1= q_ews_max_1 + 0.0001
+   #   T_in<-fun_T_in(q_ews_max_1)
+   # }
+  
+   ####For parcels within groundwater protection areas -> not below +3deg!!#####
+   ###WGS###
+   while(T_in < 3){
+    q_ews_max_1= q_ews_max_1 - 0.0001
+    T_in<-fun_T_in(q_ews_max_1)
+   } 
+   while (T_in >3.05){
+    q_ews_max_1= q_ews_max_1 + 0.0001
+    T_in<-fun_T_in(q_ews_max_1)
+   }
+  
+  Grundlast<-((q_ews_max_1*EWS_length*EWS_count * Usage * 1000) / (EWS_length*EWS_count*8760))
+  ZyklischeLast<-(((q_ews_max_1*EWS_length*EWS_count * Usage *1000)*0.16)/(730*EWS_length*EWS_count)-((q_ews_max_1*EWS_length*EWS_count * Usage * 1000) / (EWS_length*EWS_count*8760)))
+  SpitzenLast<-(EWS_length*EWS_count*q_ews_max_1*1000)/((EWS_length*EWS_count))-Grundlast-ZyklischeLast
+  
+  
+  dT_stat <--(Grundlast)*(R_b+R_stat)
+  dT_cycl <--ZyklischeLast*(R_cycl+R_b)
+  dT_max <--(SpitzenLast*(R_b+R_max))
+  dT_mean_mean<- T_soil + (dT_stat+dT_cycl+dT_max)
+
+  fun_dT_mean<-function(q_ews_max_1){
+    -(-(((q_ews_max_1*EWS_length*EWS_count * Usage * 1000) / (EWS_length*EWS_count*8760)))*(R_b+R_stat)
+      + -(((q_ews_max_1*EWS_length*EWS_count * Usage *1000)*0.16)/(730*EWS_length*EWS_count)-((q_ews_max_1*EWS_length*EWS_count * Usage * 1000) / (EWS_length*EWS_count*8760)))*(R_cycl+R_b)
+      -dT_Sole/2)
+  }
+  
+  dT_mean<-fun_dT_mean(q_ews_max_1)
+  
+  while(dT_mean > 11){
+    q_ews_max_1= q_ews_max_1 - 0.0001
+    dT_mean<-fun_dT_mean(q_ews_max_1)
+  } 
+  
+  T_in<-fun_T_in(q_ews_max_1)
+  
+  ##dT_mean not allowed to be >11K##
+  #dT_mean <- -(dT_stat+ dT_cycl-dT_Sole/2)
+  if(dT_mean >11){
+    b<-TRUE
+  } else{
+    b<-FALSE
+  }
+  
+  ##dT_ max not allowed to be >17K##
+  dT_max_17 <- -(T_in - T_soil)
+  if(dT_max_17 > 17){
+    a<-TRUE
+  } else{
+    a<-FALSE
+  }
+  
+  
+  P <- EWS_length*EWS_count*q_ews_max_1*COP/(COP-1)
+  Q <- P * Usage
+  ####Output####
+  c<-P ##total Power EWS (kW)
+  d<-T_in #Temperature into borehole
+  e<-q_ews_max_1 #maximum heat extraction
+  f<-Q
+  g<-dT_max_17
+  h<-dT_mean
+  j<-location
+  results<-data.frame(j, a, b, c, d, e, f,g,h)
+  colnames(results)<-c("Location", "dT17","dT11" , "P", "T_in", "q_EWS", "Q", "dT_max", "dT_mean")
+  return(results)
+}
