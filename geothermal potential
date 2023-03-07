@@ -133,3 +133,21 @@ geotherm <- function(location, T_surface, EWS_length, EWS_count, Lambda, q_geo, 
   colnames(results)<-c("Location", "P" , "Q", "q_bhe", "T_in", "dT_mean")
   return(results)
 }
+
+
+###loop over rows of df to calculate output####
+results<-vector("list",2)
+
+for(i in 1:length(dat$location)){
+  
+  results[[i]]<- geotherm(df$location[i], df$T_surface[i], df$EWS_length[i], df$EWS_count[i], df$Lambda[i], df$q_geo[i], df$q_ews_max[i], df$GVal[i])
+  
+}
+
+df_out<-as.data.frame(data.table::rbindlist(results))
+
+#########Create output file####
+df2<- (df_out%>%
+          inner_join(df, by=c("Location"="location")))
+
+write.csv(df2, file="Shallow_geothermal_potenmtial.csv")
